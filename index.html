@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html>
+<head lang="en">
+    <meta charset="UTF-8">
+    <title>Mirror</title>
+</head>
+
+<style>
+    #content{
+        position: absolute;
+        height: 98%;
+        width: 98%
+    }
+    #stats{
+        position: absolute;
+        left: 2px;
+        z-index: 3
+    }
+    video{
+        position: absolute;
+        height: 100%;
+        z-index: 2;
+    }
+    canvas{
+        position: absolute;
+        z-index: 1;
+    }
+</style>
+
+<body>
+    <div id="content">
+        <div id="stats"></div>
+        <video id="vidme" autoplay hidden></video>
+        <canvas id="mirror"></canvas>
+</div>
+<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.4.0/jquery.min.js"></script>
+<script>
+    $(document).ready( function(){
+
+        var video = $('#vidme')[0];   //use var so we only call jQuery selectors once
+
+        var w =  1280,              //video width
+            h = 720,                //video width
+            r=30;                   //framerate: default to 30
+
+        var vidRatio = 1280/720;    //use a 16:9 ratio
+
+        var writeMirror;                 //global var for our mirror function
+
+        //Get the local video with getUserMedia
+        navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia;
+                //Make sure getUserMedia is available
+        if(!navigator.getUserMedia){
+            $("#content").innerHTML(":( Your browser does not support getUserMedia")
+        }
+        else{
+
+            //ask for 720p resolution
+            var constraints = {
+                audio: false,           //no need for audio
+                video: {
+                    mandatory: {
+                       minWidth: w,
+                       minHeight: h
+                    }
+                }
+            };
+
+            function onSuccess(stream) {
+                window.stream = stream; // stream available to console
+                video.src = window.URL.createObjectURL(stream);
+                video.play();
+                console.log("showing video");
+
+                //get the returned video dimensions once the video starts playing
+                //question: is "playing" event from stream than vid? Some other event?
+                video.addEventListener("playing", getDimensions());
+
+            }
+            function onFail(error){
+                //To DO: on fail due to camera constraints try again with a lower res
+                $('#content').innerText("Sorry - you have an error: " + error);
+                console.log(error);
+            }
+
+            console.log("requested video size is: " + w + " x " + h );
+            navigator.getUserMedia(constraints, onSuccess, onFail);
+        }
+
+        //use vars so we only call jQuery selectors once
+        var mirrorCanvas = $('#mirror')[0];
+        var canvasContext = $("#mirror")[0].getContext('2d');
+        var area= $('#content')[0]; //
+
+        //Sometimes need to wait for dimensions to show
+        function getDimensions(){
+            var timer = 10;
+
+            var waitForDimensions = window.setInterval(function(){
+                //see if the video dimensions are available
+                if(video.videoWidth*video.videoHeight>0) {
+                    clearInterval(waitForDimensions);
+                    vidRatio = video.videoWidth/video.videoHeight;
+                    console.log("after waiting " + timer +  " ms, actual video size is: "  + video.videoWidth + " x " + video.videoHeight);
+                    startCanvas();
+                    //start calculating stats once the video is started
+                    calculateStats();
+                }
+                //If not, wait another 10ms
+                else {
+                    //console.log("No video dimensions after " + timer + " ms");
+                    timer+=10;
+                }
+            }, 10);
+        }
+
+        //Canvas stuff
+        function startCanvas(){
+
+            mirrorCanvas.setAttribute("height", area.offsetHeight );    //use the whole height of 'content' div
+            mirrorCanvas.setAttribute("width", area.offsetHeight * vidRatio); //scale the width accordingly
+
+            canvasContext.translate(area.offsetHeight * vidRatio,0);     //move the drawing cursor to the right edge
+            canvasContext.scale(-1,1);                              //flip the image horizontally
+
+            drawMirror(r);                                      //start at the default rate
+
+        }
+
+        //function to draw the mirror at the specified number of times a second
+        function drawMirror(rate){
+            writeMirror = window.setInterval( function(){
+                if ( $("#mirror").is(":hidden") ) return;  //don't draw if the canvas is hidden
+                canvasContext.drawImage(video, 0,0,area.offsetHeight * vidRatio,  area.offsetHeight );
+            }, 1/rate);
+        }
+
+        //resize the canvas is the window is changed
+        $(window).resize(function(){
+            mirrorCanvas.setAttribute("height", area.offsetHeight );
+            mirrorCanvas.setAttribute("width", area.offsetHeight * vidRatio);
+            canvasContext.translate(area.offsetHeight * vidRatio,0);   //move the drawing cursor to the right edge
+            canvasContext.scale(-1,1);      //flip the image horizontally
+        });
+
+        //Change the mirror mode on click
+        $(document).click(function(){
+            $('#vidme').toggle();
+            $('#mirror').toggle();
+            console.log("toggling outputs");
+        });
+
+        //modified from: http://git.chromium.org/gitweb/?p=chromium.git;a=blob;f=chrome/test/data/media/html/media_stat_perf.html
+        function calculateStats() {
+
+            var decodedFrames = 0,
+                    droppedFrames = 0,
+                    decodedFPS = [],
+                    droppedFPS = [],
+                    startTime = new Date().getTime(),
+                    deltaTime = 0;
+            var decodedFPSavg = 0,
+                    droppedFPSavg = 0,
+                    currentDecodedFPS= 0,
+                    currentDroppedFPS=0;
+
+            window.setInterval(function(){
+
+                if (video.readyState <= HTMLMediaElement.HAVE_CURRENT_DATA ||
+                        video.paused || video.ended ) {
+                    console.log("No video to get stats on");
+                    return;
+                }
+                else if (!video.webkitDecodedFrameCount){
+                    console.log("Video FPS calcs not supported");
+                    video.removeEventListener("playing", handler);
+                    return;
+                }
+                else{
+                    var currentTime = new Date().getTime();
+                    deltaTime = (currentTime - startTime) / 1000;
+                    startTime = currentTime;
+
+                    // Calculate decoded frames per sec.
+                    var fps = (video.webkitDecodedFrameCount - decodedFrames) / deltaTime;
+                    decodedFrames = video.webkitDecodedFrameCount;
+                    decodedFPS.push(fps);
+
+                    // Calculate dropped frames per sec.
+                    fps = (video.webkitDroppedFrameCount - droppedFrames) / deltaTime;
+                    droppedFrames = video.webkitDroppedFrameCount;
+                    droppedFPS.push(fps);
+
+                    //calculate averages
+                    decodedFPSavg = decodedFPS.average();
+                    droppedFPSavg = droppedFPS.average();
+                    currentDecodedFPS = Math.round(decodedFPS.slice(-1)[0]);
+                    currentDroppedFPS = Math.round(droppedFPS.slice(-1)[0]);
+
+                    //write the results to a table
+                    $("#stats")[0].innerHTML =
+                            "Decoded frames: " + decodedFrames + " Avg: " + decodedFPS.average().toFixed() + " fps. Current:" + currentDecodedFPS + " fps <br>" +
+                            "Dropped frames: " + droppedFrames + " Avg: " + droppedFPS.average().toFixed() + " fps. Current:" + currentDroppedFPS +" fps <br>" +
+                            "Total frames: " + (decodedFrames + droppedFrames) + " Avg: " + (decodedFPSavg + droppedFPSavg).toFixed() + " fps. Current:" +  (currentDecodedFPS + currentDroppedFPS) +" fps <br>";
+
+                    //Check if the current framerate has changed
+                    if (r!=Math.round(currentDecodedFPS)){
+                        clearInterval(mirror);
+                        //set the mirrorCanvas update rate to whatever the decoded framerate is
+                        drawMirror(Math.round(currentDecodedFPS));
+                    }
+                }
+            }, 1000);
+        }
+
+    });
+
+</script>
+
+<script>
+    //Added this to show averages
+    //source: http://stackoverflow.com/a/18234568/2186163
+    Array.prototype.average = function () {
+        var sum = 0, j = 0;
+        for (var i = 0; i < this.length, isFinite(this[i]); i++) {
+            sum += parseFloat(this[i]); ++j;
+        }
+        return j ? sum / j : 0;
+    };
+
+</script>
+</body>
+</html>
